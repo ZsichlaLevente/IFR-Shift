@@ -12,16 +12,57 @@ functions_optim <- list(
   genlog = list(
     nop = 4,
     body = "parmsvector['par1']/(1+exp(-parmsvector['par2']*(age-(parmsvector['par3']))))+parmsvector['par4']",
-    # parscale = c(0.5, 0.1, 80, 1e-5)
+    body.m = "pars.m[1]/(1+exp(-pars.m[2]*(age.d-(pars.m[3]))))+pars.m[4]",
+    body.f = "pars.f[1]/(1+exp(-pars.f[2]*(age.d-(pars.f[3]))))+pars.f[4]",
     parints = list(c(0, 1), c(0.01, 1), c(10, 200), c(1e-6, 1e-4))
   ),
   exp = list(
     nop = 2,
     body = "parmsvector['par1']*exp(age*parmsvector['par2'])",
-    # parscale = c(1.75e-6, 0.125)
+    body.m = "pars.m[1]*exp(age.d*pars.m[2])",
+    body.f = "pars.f[1]*exp(age.d*pars.f[2])",
     parints = list(c(1e-7, 1e-5), c(0.01, 0.5))
+  ),
+  GM = list(
+    nop = 3,
+    body = "parmsvector['par1']*exp(parmsvector['par2']*age)+parmsvector['par3']",
+    body.m = "pars.m[1]*exp(pars.m[2]*age.d)+pars.m[3]",
+    body.f = "pars.f[1]*exp(pars.f[2]*age.d)+pars.f[3]",
+    parints = list(c(1e-6, 1e-4), c(0.01, 0.05),c(1e-6,1e-4))
+  ),
+  G = list(
+    nop = 2,
+    body = "parmsvector['par1']*exp(parmsvector['par2']*age)",
+    body.m = "pars.m[1]*exp(pars.m[2]*age.d)",
+    body.f = "pars.f[1]*exp(pars.f[2]*age.d)",
+    parints = list(c(1e-6, 1e-4), c(0.01, 0.05))
   )
 )
+
+functions_optim_shift <- list(
+  genlog = list(
+    nop = 1,
+    body = "pars.f[1]/(1+exp(-pars.f[2]*(age.d-(pars.f[3])+parmsvector['par1'])))+pars.f[4]",
+    parints = list(c(1, 5))
+  ),
+  exp = list(
+    nop = 1,
+    body = "pars.f[1]*exp((age.d+parmsvector['par1'])*pars.f[2])",
+    parints = list(c(1, 5))
+  ),
+  GM = list(
+    nop = 1,
+    body = "pars.f[1]*exp(pars.f[2]*(age.d+parmsvector['par1']))+pars.f[3]",
+    parints = list(c(1, 5))
+  ),
+  G = list(
+    nop = 1,
+    body = "pars.f[1]*exp(pars.f[2]*(age.d+parmsvector['par1']))",
+    parints = list(c(1, 5))
+  )
+)
+
+
 
 
 IFR_optim <- list(
@@ -99,8 +140,10 @@ agebased <- function(iterations,
       
       if (j == 1) {
         assign("fx.m.age", fx(parmsvector), envir = .GlobalEnv)
+        assign("pars.m", parmsvector, envir = .GlobalEnv)
       } else if (j == 2) {
         assign("fx.f.age", fx(parmsvector), envir = .GlobalEnv)
+        assign("pars.f", parmsvector, envir = .GlobalEnv)
       }
     }
     assign("fx.fm.age", (fx.f.age * dem$fr.Females[(age + 1) - 20] + fx.m.age * dem$fr.Males[(age + 1) - 20]) / dem$fr.Total[(age + 1) - 20], envir = .GlobalEnv)
@@ -184,7 +227,7 @@ agebased <- function(iterations,
   firstguess <- rep(1, 2 * eval(parse(text = paste("functions_optim$", optFunction, "$nop", sep = ""))))
   
   ycoords.age.results <<- data.frame(it = numeric(), agecat = numeric(), gender = numeric(), value = numeric())
-  sse.age.results <<- data.frame(it = numeric(), sse=numeric())
+  sse.age.results <<- data.frame(it = numeric(), sse=numeric(),shift=numeric(),sse2=numeric())
   fx.age.age.results <<- data.frame(it = numeric(), age = numeric(), gender = numeric(), value = numeric())
   fx.age.agegroup.results <<- data.frame(it = numeric(), agecat = numeric(), gender = numeric(), value = numeric())
   
@@ -193,6 +236,35 @@ agebased <- function(iterations,
   bestmethod <- rownames(estimate_all)[estimate_all$value == min(estimate_all$value)]
   estimate <- optimx(firstguess, ef, method = bestmethod, lower = 0)
   
+  ef2 <- function(par, func = optFunction, IFR = optIFR) {
+    age.d<-seq(20,99,by=0.01)
+    nop <- eval(parse(text = paste("functions_optim_shift$", func, "$nop", sep = "")))
+      parmsvector <- par
+      names(parmsvector) <- "par1"
+      
+      eval(parse(text = paste("fx.m <- function() { return(",
+                              eval(parse(text = paste("functions_optim$", func, "$body.m", sep = ""))),
+                              ")}",
+                              sep = ""
+      )))
+      fx.m.age.d<-fx.m()
+      
+      eval(parse(text = paste("fx <- function(parmsvector) { return(",
+                              eval(parse(text = paste("functions_optim_shift$", func, "$body", sep = ""))),
+                              ")}",
+                              sep = ""
+      )))
+      assign("fx.m.age.d.shift", fx(parmsvector), envir = .GlobalEnv)
+
+    #sse<-(sum((log(fx.m.age.d.shift) - log(fx.m.age.d))^2) )
+    sse<-(sum(((fx.m.age.d.shift) - (fx.m.age.d))^2) )
+    return(sse)
+  }
+  
+  estimate_all2 <<- optimx(1, ef2, control = list(all.methods = TRUE), lower = 1e-100)
+  bestmethod2 <- rownames(estimate_all2)[estimate_all2$value == min(estimate_all2$value)]
+  estimate2 <- optimx(1, ef2, method = bestmethod2, lower = 0)
+
     ycoords.age.results <<- rbind(ycoords.age.results, data.frame(it = 0, agecat = xcoord, gender = "m", value = ycoord.male.median))
     ycoords.age.results <<- rbind(ycoords.age.results, data.frame(it = 0, agecat = xcoord, gender = "f", value = ycoord.female.median))
     
@@ -201,11 +273,13 @@ agebased <- function(iterations,
 
   fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = 0, age = 1:length(fx.m.age), gender = "m", value = fx.m.age))
   fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = 0, age = 1:length(fx.f.age), gender = "f", value = fx.f.age))
-  sse.age.results <<- rbind(sse.age.results, data.frame(it = 0, sse = estimate$value))
+  fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = 0, age = 1:length(fx.f.age), gender = "ms", value = fx.m.age.d.shift[seq(20,99,by=0.01)%%1==0]))
+  sse.age.results <<- rbind(sse.age.results, data.frame(it = 0, sse = estimate$value,shift=estimate2$p1, sse2 = estimate2$value))
   
   for (I in 1:iterations) {
     IFR.Gen(coords = F)
     estimate <- optimx(firstguess, ef, method = bestmethod, lower = 0)
+    estimate2 <- optimx(1, ef2, method = bestmethod2, lower = 0)
     
       ycoords.age.results <<- rbind(ycoords.age.results, data.frame(it = I, agecat = xcoord, gender = "m", value = ycoord.male))
       ycoords.age.results <<- rbind(ycoords.age.results, data.frame(it = I, agecat = xcoord, gender = "f", value = ycoord.female))
@@ -213,11 +287,12 @@ agebased <- function(iterations,
       fx.age.agegroup.results <<- rbind(fx.age.agegroup.results, data.frame(it = I, agecat = meanage.male, gender = "m", value = mort.pred.male.age))
       fx.age.agegroup.results <<- rbind(fx.age.agegroup.results, data.frame(it = I, agecat = meanage.female, gender = "f", value = mort.pred.female.age))
 
-    sse.age.results <<- rbind(sse.age.results, data.frame(it = I, sse = estimate$value))
+    sse.age.results <<- rbind(sse.age.results, data.frame(it = I, sse = estimate$value,shift=estimate2$p1, sse2 = estimate2$value))
     fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = I, age = 1:length(fx.m.age), gender = "m", value = fx.m.age))
     fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = I, age = 1:length(fx.f.age), gender = "f", value = fx.f.age))
+    fx.age.age.results <<- rbind(fx.age.age.results, data.frame(it = I, age = 1:length(fx.f.age), gender = "ms", value = fx.m.age.d.shift[seq(20,99,by=0.01)%%1==0]))
     
-    print(paste("Estimated sse:", estimate$value, " Progress:", (I / iterations) * 100, "%"))
+    print(paste("Estimated sse:", estimate$value,"Estimated sse2:", estimate2$value, " Progress:", (I / iterations) * 100, "%"))
   }
 }
 
@@ -278,7 +353,7 @@ plots.models <- function(optIFR = optIFR_def) {
   }
   
   agebased1 <- ggplot() +
-    geom_line(data = fx.age.age.results, aes(x = age + 20 - 1, y = value, group = paste(it, gender), col = gender), alpha = 0.5)+
+    geom_line(data = subset(fx.age.age.results,gender!="ms"), aes(x = age + 20 - 1, y = value, group = paste(it, gender), col = gender), alpha = 0.5)+
       geom_line(data = NULL, aes(x = xcoord, y = ycoord.male.lower), col = "lightskyblue", size = 1, linetype = "longdash") +
       geom_line(data = NULL, aes(x = xcoord, y = ycoord.male.median), col = "lightskyblue", size = 1) +
       geom_line(data = NULL, aes(x = xcoord, y = ycoord.male.upper), col = "lightskyblue", size = 1, linetype = "longdash") +
@@ -298,10 +373,28 @@ plots.models <- function(optIFR = optIFR_def) {
     ) +
     theme(legend.position = "None")
   
+  agebased.shift <- ggplot() +
+    geom_line(data =NULL, aes(x = subset(fx.age.age.results,gender=="m")$value, y = subset(fx.age.age.results,gender=="ms")$value, group = subset(fx.age.age.results,gender=="ms")$it), alpha = 0.5,color="red")+
+    geom_abline(slope=1,lwd=1.2)+
+    labs(x = "Male IFR", y = "Male Shifted IFR", title = "Fit of the shift model") +
+    myTheme()
+  
   sse.age <- ggplot(data = sse.age.results, aes(x = "Agebased", y = sse)) +
     geom_violin(fill = "darkorchid", alpha = 0.5) +
     geom_boxplot(width = 0.2) +
     labs(x = "", y = "sse", title = "Agebased model") +
+    myTheme()
+  
+  sse.shift <- ggplot(data = sse.age.results, aes(x = "Shift", y = sse2)) +
+    geom_violin(fill = "darkorchid", alpha = 0.5) +
+    geom_boxplot(width = 0.2) +
+    labs(x = "", y = "sse", title = "Shift model") +
+    myTheme()
+  
+  shift <- ggplot(data = sse.age.results, aes(x = "Agebased", y = shift)) +
+    geom_violin(fill = "forestgreen", alpha = 0.5) +
+    geom_boxplot(width = 0.2) +
+    labs(x = "", y = "Age shift", title = "Agebased model") +
     myTheme()
 
   agebased.dead.ribbon<-data.frame(gender=numeric(),x=numeric(),y=numeric(),lower=numeric(),upper=numeric())
@@ -329,6 +422,7 @@ plots.models <- function(optIFR = optIFR_def) {
   
   pdf("Results.pdf", width = 22, height = 10)
   grid.arrange(agebased1,agebased2,sse.age,ncol=3)
+  grid.arrange(sse.shift,shift,agebased.shift,ncol=3)
   grid.arrange(compare.deaths.male1,compare.deaths.female1,ncol=2)
   dev.off()
 }
@@ -337,12 +431,12 @@ plots.models <- function(optIFR = optIFR_def) {
 # Commands----
 age <- 20:99
 bestMethod=T
-population_def <- "mort_GBR_NP_18_mod.csv"
+population_def <- "mort_BGR_17_mod.csv"
 optIFR_def <- "ODriscoll"
 
 agebased(
-  iterations = 100,
-  optFunction = "exp"
+  iterations = 10,
+  optFunction = "G"
 )
 
 predict.compare(
@@ -354,3 +448,4 @@ predict.compare(
 
 
 plots.models()
+
