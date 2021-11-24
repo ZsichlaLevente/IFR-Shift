@@ -1,0 +1,15 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: >-
+  Age-specific mitigation strategies can reduce sex
+  disparity in COVID-19 mortality
+message: Supplementary material
+type: software
+authors:
+  - given-names: Levente
+    family-names: Zsicha
+    email: zsichla.levente@gmail.com
+    affiliation: Eötvös Loránd University
+    orcid: 'https://orcid.org/0000-0001-7068-9059'
